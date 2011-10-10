@@ -61,19 +61,19 @@ exports.Package = class Package
         (function(/*! Stitch !*/) {
           if (!this.#{@identifier}) {
             var modules = {}, cache = {}, require = function(name, root) {
-              var module = cache[name], path = expand(root, name), fn;
+              var path = expand(root, name), module = cache[path], fn;
               if (module) {
                 return module;
               } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
                 module = {id: name, exports: {}};
                 try {
-                  cache[name] = module.exports;
+                  cache[path] = module.exports;
                   fn(module.exports, function(name) {
                     return require(name, dirname(path));
                   }, module);
-                  return cache[name] = module.exports;
+                  return cache[path] = module.exports;
                 } catch (err) {
-                  delete cache[name];
+                  delete cache[path];
                   throw err;
                 }
               } else {
