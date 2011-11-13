@@ -62,6 +62,7 @@ exports.Package = class Package
           if (!this.#{@identifier}) {
             var modules = {}, cache = {}, require = function(name, root) {
               var path = expand(root, name), module = cache[path], fn;
+              var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
               if (module) {
                 return module;
               } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
