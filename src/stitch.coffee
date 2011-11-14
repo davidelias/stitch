@@ -28,6 +28,15 @@ try
       module._compile content, filename
 catch err
 
+commonPrefix = (paths) ->
+  return '' if not paths
+
+  s1 = paths[0]
+  s2 = paths[paths.length - 1]
+  for c, i in s1
+    if c != s2[i]
+      return s1[...i]
+  s1
 
 exports.Package = class Package
   constructor: (config) ->
@@ -37,8 +46,11 @@ exports.Package = class Package
     @compilers    = _.extend {}, compilers, config.compilers
 
     @cache        = config.cache ? true
+    @debug        = config.debug ? false
     @mtimeCache   = {}
     @compileCache = {}
+    if @debug
+      @files = {}
 
   compile: (callback) ->
     async.parallel [
@@ -56,61 +68,8 @@ exports.Package = class Package
   compileSources: (callback) =>
     async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
       return callback err if err
-
-      result = """
-        (function(/*! Stitch !*/) {
-          if (!this.#{@identifier}) {
-            var modules = {}, cache = {}, require = function(name, root) {
-              var path = expand(root, name), module = cache[path], fn;
-              var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
-              if (module) {
-                return module;
-              } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
-                module = {id: name, exports: {}};
-                try {
-                  cache[path] = module.exports;
-                  fn(module.exports, function(name) {
-                    return require(name, dirname(path));
-                  }, module);
-                  return cache[path] = module.exports;
-                } catch (err) {
-                  delete cache[path];
-                  throw err;
-                }
-              } else {
-                throw 'module \\'' + name + '\\' not found';
-              }
-            }, expand = function(root, name) {
-              var results = [], parts, part;
-              if (/^\\.\\.?(\\/|$)/.test(name)) {
-                parts = [root, name].join('/').split('/');
-              } else {
-                parts = name.split('/');
-              }
-              for (var i = 0, length = parts.length; i < length; i++) {
-                part = parts[i];
-                if (part == '..') {
-                  results.pop();
-                } else if (part != '.' && part != '') {
-                  results.push(part);
-                }
-              }
-              return results.join('/');
-            }, dirname = function(path) {
-              return path.split('/').slice(0, -1).join('/');
-            };
-            this.#{@identifier} = function(name) {
-              return require(name, '');
-            }
-            this.#{@identifier}.define = function(bundle) {
-              for (var key in bundle)
-                modules[key] = bundle[key];
-            };
-          }
-          return this.#{@identifier}.define;
-        }).call(this)({
-      """
-
+          
+      result = "({"    
       index = 0
       for name, {filename, source} of sources
         result += if index++ is 0 then "" else ", "
@@ -121,20 +80,59 @@ exports.Package = class Package
         });\n
       """
 
-      callback err, result
+      callback err, @getClientJavascript(result)
+  
+  compileDebug: (callback) ->
+    async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
+      return callback err if err
+
+      result = [";"]
+      files = @dependencies[0...@dependencies.length]
+      for name, {base, filename} of sources
+        files.push "#{base}#{filename}"
+      @commonBase = commonPrefix(files)
+      for file in files
+        filename = file.replace @commonBase, ''
+        result.push "require.load('#{filename}');"
+      
+      callback err, @getClientJavascript(result.join("\n"))
 
   createServer: ->
     (req, res, next) =>
-      @compile (err, source) ->
-        if err
-          console.error "#{err.stack}"
-          message = "" + err.stack
-          res.writeHead 500, 'Content-Type': 'text/javascript'
-          res.end "throw #{JSON.stringify(message)}"
+      if @debug
+        @baseURL = require('url').format
+          protocol: 'http'
+          host: req.header('host')
+
+      @[if @debug then 'compileDebug' else 'compile'] (err, source) ->
+        if err then @showError err, res
         else
           res.writeHead 200, 'Content-Type': 'text/javascript'
           res.end source
 
+  serveModule: ->
+    (req, res, next) =>
+      path = join @commonBase, req.params[0]
+      if @compilers[extname(path).slice(1)] and path not in @dependencies
+      
+        @getRelativePath path, (err, relativePath) =>
+          return @showError err, res if err
+        
+          @compileFile path, (err, source) =>
+            if err then @showError err, res
+            else
+              extension = extname relativePath
+              key = JSON.stringify relativePath.slice(0, -extension.length)
+              res.writeHead 200, 'Content-Type': 'text/javascript'
+              res.end "require.define({#{key}: function(exports, require, module) {#{source}}});"
+      else
+        next()
+  
+  showError: (err, res) ->
+    console.error "#{err.stack}"
+    message = "" + err.stack
+    res.writeHead 500, 'Content-Type': 'text/javascript'
+    res.end "throw #{JSON.stringify(message)}"
 
   gatherSourcesFromPath: (sources, sourcePath, callback) ->
     fs.stat sourcePath, (err, stat) =>
@@ -158,6 +156,7 @@ exports.Package = class Package
             extension = extname relativePath
             key       = relativePath.slice(0, -extension.length)
             sources[key] =
+              base: path.replace relativePath, ''
               filename: relativePath
               source:   source
             callback err, sources
@@ -235,6 +234,66 @@ exports.Package = class Package
         files.push filename
       else
         callback err, files.sort()
+
+  getClientJavascript: (code) ->
+    return """
+      (function(/*! Stitch !*/) {
+        if (!this.#{@identifier}) {
+          var head, modules = {}, cache = {}, require = function(name, root) {
+            var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
+            if (module) {
+              return module;
+            } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
+              module = {id: name, exports: {}};
+              try {
+                cache[path] = module.exports;
+                fn(module.exports, function(name) {
+                  return require(name, dirname(path));
+                }, module);
+                return cache[path] = module.exports;
+              } catch (err) {
+                delete cache[path];
+                throw err;
+              }
+            } else {
+              throw 'module \\'' + name + '\\' not found';
+            }
+          }, expand = function(root, name) {
+            var results = [], parts, part;
+            if (/^\\.\\.?(\\/|$)/.test(name)) {
+              parts = [root, name].join('/').split('/');
+            } else {
+              parts = name.split('/');
+            }
+            for (var i = 0, length = parts.length; i < length; i++) {
+              part = parts[i];
+              if (part == '..') {
+                results.pop();
+              } else if (part != '.' && part != '') {
+                results.push(part);
+              }
+            }
+            return results.join('/');
+          }, dirname = function(path) {
+            return path.split('/').slice(0, -1).join('/');
+          };
+          this.#{@identifier} = function(name) {
+            return require(name, '');
+          }
+          this.#{@identifier}.define = function(bundle) {
+            for (var key in bundle)
+              modules[key] = bundle[key];
+          };
+          this.#{@identifier}.load = function(path) {
+            if (!head) head = document.getElementsByTagName('head')[0];
+            var el = document.createElement('script');
+            el.src = "#{@baseURL}/" + path;
+            el.async = false;
+            head.insertBefore(el, head.firstChild);
+          };
+        }
+        return this.#{@identifier}.define;
+      }).call(this)#{code}"""
 
 
 exports.createPackage = (config) ->
