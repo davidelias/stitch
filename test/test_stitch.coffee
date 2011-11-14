@@ -301,6 +301,19 @@ module.exports =
       test.ok testRequire("foo/bar/baz")
       test.done()
 
+  "require to same module by diferent names executes only once": (test) ->
+    test.expect 3
+    
+    defaultPackage.compile (err, sources) ->
+      test.ok !err
+      testRequire = load sources
+      relative = testRequire('relative')
+      relative.x = 1
+      relative.custom.z = 1
+      test.same 1, testRequire('relative').x
+      test.same 1, testRequire('custom_exports').z
+      test.done()
+
 if stitch.compilers.eco
   module.exports["eco compiler"] = (test) ->
     test.expect 2
