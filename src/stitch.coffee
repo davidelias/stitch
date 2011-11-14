@@ -110,21 +110,27 @@ exports.Package = class Package
           res.writeHead 200, 'Content-Type': 'text/javascript'
           res.end source
 
-  serveModule: ->
+  createModuleServer: ->
     (req, res, next) =>
       path = join @commonBase, req.params[0]
-      if @compilers[extname(path).slice(1)] and path not in @dependencies
-      
-        @getRelativePath path, (err, relativePath) =>
-          return @showError err, res if err
+      if path in @dependencies
+        fs.readFile path, (err, source) =>
+          if err then @showError err, res
+          else
+            res.writeHead 200, 'Content-Type': 'text/javascript'
+            res.end source
         
-          @compileFile path, (err, source) =>
-            if err then @showError err, res
-            else
-              extension = extname relativePath
-              key = JSON.stringify relativePath.slice(0, -extension.length)
-              res.writeHead 200, 'Content-Type': 'text/javascript'
-              res.end "require.define({#{key}: function(exports, require, module) {#{source}}});"
+      else if @compilers[extname(path).slice(1)]
+        @getRelativePath path, (err, relativePath) =>
+          if err then @showError err, res
+          else
+            @compileFile path, (err, source) =>
+              if err then @showError err, res
+              else
+                extension = extname relativePath
+                key = JSON.stringify relativePath.slice(0, -extension.length)
+                res.writeHead 200, 'Content-Type': 'text/javascript'
+                res.end "require.define({#{key}: function(exports, require, module) {#{source}}});"
       else
         next()
   
@@ -235,11 +241,11 @@ exports.Package = class Package
       else
         callback err, files.sort()
 
-  getClientJavascript: (code) ->
-    return """
+  getClientJavascript: (suffix) ->
+    code = """
       (function(/*! Stitch !*/) {
         if (!this.#{@identifier}) {
-          var head, modules = {}, cache = {}, require = function(name, root) {
+          var modules = {}, cache = {}, require = function(name, root) {
           var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
           if (module) {
             return module;
@@ -283,17 +289,26 @@ exports.Package = class Package
         this.#{@identifier}.define = function(bundle) {
           for (var key in bundle)
             modules[key] = bundle[key];
-        };
+        };\n
+        """
+        
+    if @debug
+      code += """
+        var head = document.getElementsByTagName('head')[0];
         this.#{@identifier}.load = function(path) {
-          if (!head) head = document.getElementsByTagName('head')[0];
           var el = document.createElement('script');
           el.src = "#{@baseURL}/" + path;
           el.async = false;
           head.insertBefore(el, head.firstChild);
-        };
+        };\n
+        """
+
+    code += """
       }
       return this.#{@identifier}.define;
-    }).call(this)#{code}"""
+    }).call(this)#{suffix}"""
+
+    code
 
 
 exports.createPackage = (config) ->
