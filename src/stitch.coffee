@@ -240,60 +240,60 @@ exports.Package = class Package
       (function(/*! Stitch !*/) {
         if (!this.#{@identifier}) {
           var head, modules = {}, cache = {}, require = function(name, root) {
-            var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
-            if (module) {
-              return module;
-            } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
-              module = {id: name, exports: {}};
-              try {
-                cache[path] = module.exports;
-                fn(module.exports, function(name) {
-                  return require(name, dirname(path));
-                }, module);
-                return cache[path] = module.exports;
-              } catch (err) {
-                delete cache[path];
-                throw err;
-              }
-            } else {
-              throw 'module \\'' + name + '\\' not found';
+          var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
+          if (module) {
+            return module;
+          } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
+            module = {id: name, exports: {}};
+            try {
+              cache[path] = module.exports;
+              fn(module.exports, function(name) {
+                return require(name, dirname(path));
+              }, module);
+              return cache[path] = module.exports;
+            } catch (err) {
+              delete cache[path];
+              throw err;
             }
-          }, expand = function(root, name) {
-            var results = [], parts, part;
-            if (/^\\.\\.?(\\/|$)/.test(name)) {
-              parts = [root, name].join('/').split('/');
-            } else {
-              parts = name.split('/');
-            }
-            for (var i = 0, length = parts.length; i < length; i++) {
-              part = parts[i];
-              if (part == '..') {
-                results.pop();
-              } else if (part != '.' && part != '') {
-                results.push(part);
-              }
-            }
-            return results.join('/');
-          }, dirname = function(path) {
-            return path.split('/').slice(0, -1).join('/');
-          };
-          this.#{@identifier} = function(name) {
-            return require(name, '');
+          } else {
+            throw 'module \\'' + name + '\\' not found';
           }
-          this.#{@identifier}.define = function(bundle) {
-            for (var key in bundle)
-              modules[key] = bundle[key];
-          };
-          this.#{@identifier}.load = function(path) {
-            if (!head) head = document.getElementsByTagName('head')[0];
-            var el = document.createElement('script');
-            el.src = "#{@baseURL}/" + path;
-            el.async = false;
-            head.insertBefore(el, head.firstChild);
-          };
+        }, expand = function(root, name) {
+          var results = [], parts, part;
+          if (/^\\.\\.?(\\/|$)/.test(name)) {
+            parts = [root, name].join('/').split('/');
+          } else {
+            parts = name.split('/');
+          }
+          for (var i = 0, length = parts.length; i < length; i++) {
+            part = parts[i];
+            if (part == '..') {
+              results.pop();
+            } else if (part != '.' && part != '') {
+              results.push(part);
+            }
+          }
+          return results.join('/');
+        }, dirname = function(path) {
+          return path.split('/').slice(0, -1).join('/');
+        };
+        this.#{@identifier} = function(name) {
+          return require(name, '');
         }
-        return this.#{@identifier}.define;
-      }).call(this)#{code}"""
+        this.#{@identifier}.define = function(bundle) {
+          for (var key in bundle)
+            modules[key] = bundle[key];
+        };
+        this.#{@identifier}.load = function(path) {
+          if (!head) head = document.getElementsByTagName('head')[0];
+          var el = document.createElement('script');
+          el.src = "#{@baseURL}/" + path;
+          el.async = false;
+          head.insertBefore(el, head.firstChild);
+        };
+      }
+      return this.#{@identifier}.define;
+    }).call(this)#{code}"""
 
 
 exports.createPackage = (config) ->
