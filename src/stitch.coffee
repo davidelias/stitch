@@ -68,8 +68,8 @@ exports.Package = class Package
   compileSources: (callback) =>
     async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
       return callback err if err
-          
-      result = "({"    
+
+      result = "({"
       index = 0
       for name, {filename, source} of sources
         result += if index++ is 0 then "" else ", "
@@ -81,34 +81,38 @@ exports.Package = class Package
       """
 
       callback err, @getClientJavascript(result)
-  
+
   compileDebug: (callback) ->
     async.reduce @paths, {}, _.bind(@gatherSourcesFromPath, @), (err, sources) =>
       return callback err if err
 
-      result = [";"]
+      result = [";", "require.load(["]
       files = @dependencies[0...@dependencies.length]
       for name, {base, filename} of sources
         files.push "#{base}#{filename}"
       @commonBase = commonPrefix(files)
-      for file in files
+      for file, i in files
         filename = file.replace @commonBase, ''
-        result.push "require.load('#{filename}');"
-      
+        scriptAsync = if file in @dependencies then 'false' else 'true'
+        delimiter = if i == files.length - 1 then '' else ','
+        #result.push "require.load('#{filename}'#{scriptAsync});"
+        result.push "  {path: '#{filename}', async: #{scriptAsync}}#{delimiter}"
+      result.push "])"
+
       callback err, @getClientJavascript(result.join("\n"))
 
-  createServer: ->
+  createServer: (uglify) ->
     (req, res, next) =>
       if @debug
         @baseURL = require('url').format
           protocol: 'http'
           host: req.header('host')
 
-      @[if @debug then 'compileDebug' else 'compile'] (err, source) ->
+      @[if @debug then 'compileDebug' else 'compile'] (err, source) =>
         if err then @showError err, res
         else
           res.writeHead 200, 'Content-Type': 'text/javascript'
-          res.end source
+          res.end if uglify then uglify source else source
 
   createModuleServer: ->
     (req, res, next) =>
@@ -119,7 +123,7 @@ exports.Package = class Package
           else
             res.writeHead 200, 'Content-Type': 'text/javascript'
             res.end source
-        
+
       else if @compilers[extname(path).slice(1)]
         @getRelativePath path, (err, relativePath) =>
           if err then @showError err, res
@@ -133,7 +137,7 @@ exports.Package = class Package
                 res.end "require.define({#{key}: function(exports, require, module) {#{source}}});"
       else
         next()
-  
+
   showError: (err, res) ->
     console.error "#{err.stack}"
     message = "" + err.stack
@@ -246,67 +250,87 @@ exports.Package = class Package
       (function(/*! Stitch !*/) {
         if (!this.#{@identifier}) {
           var modules = {}, cache = {}, require = function(name, root) {
-          var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
-          if (module) {
-            return module;
-          } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
-            module = {id: name, exports: {}};
-            try {
-              cache[path] = module.exports;
-              fn(module.exports, function(name) {
-                return require(name, dirname(path));
-              }, module);
-              return cache[path] = module.exports;
-            } catch (err) {
-              delete cache[path];
-              throw err;
+            var path = expand(root, name), module = cache[path] || cache[path + '/index'], fn;
+            if (module) {
+              return module;
+            } else if (fn = modules[path] || modules[path = expand(path, './index')]) {
+              module = {id: name, exports: {}};
+              try {
+                cache[path] = module.exports;
+                fn(module.exports, function(name) {
+                  return require(name, dirname(path));
+                }, module);
+                return cache[path] = module.exports;
+              } catch (err) {
+                delete cache[path];
+                console.log(err.stack);
+                throw err;
+              }
+            } else {
+              throw 'module \\'' + name + '\\' not found';
             }
-          } else {
-            throw 'module \\'' + name + '\\' not found';
-          }
-        }, expand = function(root, name) {
-          var results = [], parts, part;
-          if (/^\\.\\.?(\\/|$)/.test(name)) {
-            parts = [root, name].join('/').split('/');
-          } else {
-            parts = name.split('/');
-          }
-          for (var i = 0, length = parts.length; i < length; i++) {
-            part = parts[i];
-            if (part == '..') {
-              results.pop();
-            } else if (part != '.' && part != '') {
-              results.push(part);
+          }, expand = function(root, name) {
+            var results = [], parts, part;
+            if (/^\\.\\.?(\\/|$)/.test(name)) {
+              parts = [root, name].join('/').split('/');
+            } else {
+              parts = name.split('/');
             }
-          }
-          return results.join('/');
-        }, dirname = function(path) {
-          return path.split('/').slice(0, -1).join('/');
-        };
-        this.#{@identifier} = function(name) {
-          return require(name, '');
-        }
-        this.#{@identifier}.define = function(bundle) {
-          for (var key in bundle)
-            modules[key] = bundle[key];
-        };\n
-        """
-        
-    if @debug
-      code += """
-        var head = document.getElementsByTagName('head')[0];
-        this.#{@identifier}.load = function(path) {
-          var el = document.createElement('script');
-          el.src = "#{@baseURL}/" + path;
-          el.async = false;
-          head.insertBefore(el, head.firstChild);
-        };\n
+            for (var i = 0, length = parts.length; i < length; i++) {
+              part = parts[i];
+              if (part == '..') {
+                results.pop();
+              } else if (part != '.' && part != '') {
+                results.push(part);
+              }
+            }
+            return results.join('/');
+          }, dirname = function(path) {
+            return path.split('/').slice(0, -1).join('/');
+          };
+          this.#{@identifier} = function(name) {
+            return require(name, '');
+          };
+          this.#{@identifier}.define = function(bundle) {
+            for (var key in bundle)
+              modules[key] = bundle[key];
+          };
+          this.#{@identifier}.ready = function(name) {
+            if (/complete|loaded|interactive/.test(document.readyState)) callback();
+            document.addEventListener('DOMContentLoaded', require.bind(null, name, ''), false);
+          };\n
         """
 
+    if @debug
+      code += """
+          var readyEvent = document.createEvent('Event');
+          readyEvent.initEvent('ready', true, true);
+          this.#{@identifier}.ready = function(name) {
+            if (/complete|loaded|interactive/.test(document.readyState)) callback();
+            document.addEventListener('ready', require.bind(null, name, ''), false);
+          };
+
+          this.#{@identifier}.load = function(modules) {
+            var module;
+            (function load() {
+              if (module = modules.shift()){
+                var el = document.createElement('script');
+                el.src = "#{@baseURL}/" + module.path;
+                el.async = module.async;
+                el.onload = load;
+                document.head.appendChild(el);
+              }else{
+                document.dispatchEvent(readyEvent);
+              };
+            })();
+          };\n
+      """
+
     code += """
-      }
-      return this.#{@identifier}.define;
-    }).call(this)#{suffix}"""
+        }
+        return this.#{@identifier}.define;
+      }).call(this)#{suffix}
+    """
 
     code
 
