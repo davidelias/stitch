@@ -295,19 +295,20 @@ exports.Package = class Package
             for (var key in bundle)
               modules[key] = bundle[key];
           };
-          this.#{@identifier}.ready = function(name) {
-            if (/complete|loaded|interactive/.test(document.readyState)) callback();
-            document.addEventListener('DOMContentLoaded', require.bind(null, name, ''), false);
-          };\n
+          /*this.#{@identifier}.ready = function(cb) {
+            if (!cb.call) cb = require.bind(null, cb, '');
+            if (/complete|loaded|interactive/.test(document.readyState)) cb();
+            document.addEventListener('DOMContentLoaded', cb, false);
+          };*/\n
         """
 
     if @debug
       code += """
           var readyEvent = document.createEvent('Event');
           readyEvent.initEvent('ready', true, true);
-          this.#{@identifier}.ready = function(name) {
-            if (/complete|loaded|interactive/.test(document.readyState)) callback();
-            document.addEventListener('ready', require.bind(null, name, ''), false);
+          this.#{@identifier}.ready = function(cb) {
+            if (!cb.call) cb = require.bind(null, cb, '');
+            document.addEventListener('ready', cb, false);
           };
 
           this.#{@identifier}.load = function(modules) {
@@ -316,7 +317,7 @@ exports.Package = class Package
               if (module = modules.shift()){
                 var el = document.createElement('script');
                 el.src = "#{@baseURL}/" + module.path;
-                el.async = module.async;
+                el.async = false; //module.async;
                 el.onload = load;
                 document.head.appendChild(el);
               }else{
